@@ -1,0 +1,1 @@
+An experiment in determining the most likely locations for ships in the game Battleship

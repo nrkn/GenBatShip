@@ -1,0 +1,553 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>GenBatShip</title>
+    <style>
+      body {
+        font-family: sans-serif;
+      }
+      
+      #board, #ships {
+        float: left;
+        margin-right: 1em;
+      }
+      
+      table {
+        border-collapse: collapse;
+      }
+      
+      td {
+        width: 4em;
+        height: 4em;
+        color: #000;
+        text-shadow: 0 1px 1px #fff, 0 -1px 1px #fff, 1px 0 1px #fff, -1px 0 1px #fff;
+        font-weight: bold;
+        text-align: center;
+      }
+           
+      .ship {
+        margin-bottom: 1em;
+        overflow: hidden;
+      }
+      
+      .ship .cell {
+        width: 4em;
+        height: 4em;
+        float: left;
+      }
+      
+      .ship .cell:first-child {
+        border-radius: 2em;
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+      }
+      
+      .ship .cell:last-child {
+        border-radius: 2em;
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+      }
+    </style>
+    <script src="http://code.jquery.com/jquery-1.7.2.min.js"></script>
+    <script>
+/*    
+    onehit bug fixed - was off by one - applied same fix to multihit ships - check works
+    
+    when you've said a ship has been hit once, it can only be hit again in valid 
+    places - enforce
+       
+    need to be able to undo a hit
+    
+    to undo hit - make sure if add state for following options not too stored in grid for when recalculate
+    
+    if an area HAS to be a ship enforce and it's clicked skip miss and go 
+    straight to hit
+    
+    if an square is determined to be a ship, highlight it somehow
+       
+    highlight best option
+    
+    show pegs & sunk/inferred ships
+    
+    add Ships class
+    
+    add Board class - function Board( width, height, ships )
+   
+    split game logic & display
+    
+    add row/col headers    
+    
+    change prob to black->red->yellow gradient
+    
+    make sizes % based      
+    
+    the min prob thing has a horrible big magic number - figure out what max prob can be for board and use that
+*/  
+var squareUnknown = -1,
+    squareMissed = -2,
+    squareHitUnknown = -3,
+    
+    width = 10,
+    height = 10,
+    ships = [ 
+      new Ship( 'Patrol Boat', 2, 0 ),
+      new Ship( 'Destroyer', 3, 1 ),
+      new Ship( 'Submarine', 3, 2 ),
+      new Ship( 'Battleship', 4, 3 ),
+      new Ship( 'Aircraft Carrier', 5, 4 )
+    ],
+    grid = [],
+    
+    waitingForShipId = false,
+    waitX = -1,
+    waitY = -1;
+
+function getUnhitShipLocations( size, index ) {
+  var locations = [];
+   
+  //horizontal    
+  iterateGrid( width - size + 1, height,
+    function( x, y ) {   
+      if( canPlace( x, y, size, 1, index ) ) {
+        var location = [];
+        for( var j = 0; j < size; j++ ) {
+          location.push({ x: x + j, y: y });
+        }
+        locations.push( location );
+      }
+    }
+  );  
+  
+  //vertical
+  iterateGrid( width, height - size + 1,
+    function( x, y ) {
+      if( canPlace( x, y, 1, size, index ) ) {
+        var location = [];
+        for( var j = 0; j < size; j++ ) {
+          location.push({ x: x, y: y + j });
+        }
+        locations.push( location );
+      }
+    }
+  ); 
+  
+  return locations;
+}    
+
+function getShipHitOnceLocations( known, size, index ) {
+  var hit = known[ 0 ],
+      locations = [];
+  //horizontal  
+  for( var i = 0; i < size; i++ ) {
+    var x = hit.x - i,
+        y = hit.y * 1;
+        
+    if( console ) {
+      console.log( 
+        'hitonce ' + size + ': ' + x + ', ' + y
+      );
+    }
+        
+    if( canPlace( x, y, size, 1, index ) ) {
+      var location = [];
+      for( var j = 0; j < size; j++ ) {
+        location.push({ x: x + j, y: y });
+      }
+      locations.push( location );
+    }
+  }
+
+  //vertical    
+  for( var i = 0; i < size; i++ ) {
+    var x = hit.x * 1,
+        y = hit.y - i;
+        
+    if( canPlace( x, y, 1, size, index ) ) {
+      var location = [];
+      for( var j = 0; j < size; j++ ) {
+        location.push({ x: x, y: y + j });
+      }
+      locations.push( location );
+    }
+  }  
+  
+  return locations;  
+}
+
+function minInPoints( points, axis ) {
+  points.sort(function( a, b ){
+    return a[ axis ] - b[ axis ];
+  });
+  
+  return points[ 0 ];
+}
+
+function maxInPoints( points, axis ) {
+  points.sort(function( a, b ){
+    return b[ axis ] - a[ axis ];
+  });
+  
+  return points[ 0 ];
+}
+
+
+function getShipHitLocations( index, known, size ) {
+  if( known.length === 1 ) {
+    return getShipHitOnceLocations( known, size, index );
+  }
+  
+  var locations = [];
+  
+  //horizontal
+  if( known[ 0 ].y === known[ 1 ].y ) {
+    var min = minInPoints( known, 'x' ),
+        max = maxInPoints( known, 'x' ),
+        difference = max - min,
+        y = known[ 0 ].y;
+    
+    for( var i = 0; i < size - difference; i++ ) {
+      var x = min - i;
+      if( canPlace( x, y, size, 1, index ) ) {
+        var location = [];
+        for( var j = 0; j < size; j++ ) {
+          location.push({ x: x + j, y: y });
+        }
+        locations.push( location );
+      }
+    } 
+    
+    return locations;
+  } 
+  
+  //vertical
+  var min = minInPoints( known, 'y' ),
+      max = maxInPoints( known, 'y' ),
+      difference = max - min,
+      x = known[ 0 ].x;
+  
+  for( var i = 0; i < size - difference; i++ ) {
+    var y = min - i;
+    if( canPlace( x, y, size, 1, index ) ) {
+      var location = [];
+      for( var j = 0; j < size; j++ ) {
+        location.push({ x: x, y: y + j });
+      }
+      locations.push( location );
+    }
+  } 
+  
+  return locations;
+}
+
+function locationsContain( locations, point ) {
+  for( var i = 0; i < locations.length; i++ ) {
+    var location = locations[ i ];
+    for( var j = 0; j < location.length; j++ ) {
+      var current = location[ j ];
+      if( point.x === current.x && point.y === current.y ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+    
+function Ship( name, size, index ) {
+  var self = this;
+  
+  this.name = name;
+  this.size = size;
+  this.index = index;
+  this.known = [];  
+  
+  this.status = function() {
+    if( self.known.length === self.size ) {
+      return 'sunk';
+    }
+    if( self.known.length > 0 ) {
+      return 'hit';
+    }
+    return 'unhit';
+  };
+  
+  this.locations = function() {
+    if( self.known.length === 0 ) {
+      return getUnhitShipLocations( self.size, self.index );
+    }
+    
+    return getShipHitLocations( self.index, self.known, self.size );
+  };
+  
+  this.canPlace = function( point ) {
+    return locationsContain( self.locations( grid, width, height ), point );
+  };
+}    
+    
+function iterateGrid( width, height, xFunc, yFunc ) {  
+  for( var y = 0; y < height; y++ ) {
+    if( yFunc ) {
+      yFunc( y, width, height );
+    }
+    for( var x = 0; x < width; x++ ) {
+      xFunc( x, y, width, height );
+    }
+  }  
+}    
+    
+function createGrid() {
+  iterateGrid( width, height,
+    function( x, y ) {
+      grid[ y ].push({
+        status: squareUnknown,
+        probability: 0
+      });      
+    },
+    function() {
+      grid.push( [] );
+    }    
+  );
+}
+
+function resetProbability() {
+  iterateGrid( width, height,
+    function( x, y ) {
+      grid[ y ][ x ].probability = 0;
+    }
+  );
+}
+
+function canPlace( startX, startY, width, height, index ) {
+  var clear = true;
+  for( var y = startY; y < startY + height; y++ ) {
+    for( var x = startX; x < startX + width; x++ ) {
+      if( !clear ) { 
+        continue;
+      }
+      //could be out of bounds
+      if( grid[ y ] === undefined || grid[ y ][ x ] === undefined ) {
+        continue;
+      }
+      //is clear or same ship
+      var status = Number( grid[ y ][ x ].status );
+      clear = (  status === squareUnknown ) || ( index !== undefined && status === index );
+    }
+  }
+  return clear;
+}
+
+function setShipProbability( ship ) {
+  var locations = ship.locations();
+  for( var i = 0; i < locations.length; i++ ) {
+    var location = locations[ i ];
+    for( var j = 0; j < location.length; j++ ) {
+      var point = location[ j ];
+      //uh oh look into this
+      if( grid[ point.y ] === undefined || grid[ point.y ][ point.x ] === undefined ) {
+        break;
+      }
+      grid[ point.y ][ point.x ].probability++;
+    }    
+  }
+  return; 
+}
+
+function setProbability() {
+  resetProbability();
+  for( var i = 0; i < ships.length; i++ ) {
+    var ship = ships[ i ];
+    if( ship.status() === 'sunk' ) {
+      continue;
+    } 
+    setShipProbability( ship );
+  }  
+}
+
+function maxProbability() {
+  var highest = 0;
+  iterateGrid( width, height,
+    function( x, y ) {
+      var probability = grid[ y ][ x ].probability;
+      if( probability > highest ) {
+        highest = probability;
+      }
+    }
+  ); 
+  return highest;
+}
+
+function minProbability() {
+  var lowest = 1000000;
+  iterateGrid( width, height,
+    function( x, y ) {
+      var probability = grid[ y ][ x ].probability;
+      if( probability < lowest ) {
+        lowest = probability;
+      }
+    }
+  ); 
+  return lowest;
+}
+
+function startWaiting( x, y ) {
+  waitingForShipId = true;
+  $( '#board' ).css({
+    opacity: 0.5
+  });
+  waitX = x;
+  waitY = y;
+}
+
+function stopWaiting() {
+  waitingForShipId = false;
+  $( '#board' ).css({
+    opacity: 1
+  });
+  $( '.ship' ).css({
+    opacity: 1
+  });
+  waitX = -1;
+  waitY = -1;
+}
+
+function cellClick() {
+  var td = $( this ),
+      x = td.attr( 'data-x' ),
+      y = td.attr( 'data-y' ),
+      status = grid[ y ][ x ].status;
+      
+  if( status === squareHitUnknown || status >= 0 ) {
+    grid[ y ][ x ].status = squareUnknown;
+    stopWaiting();
+  } else {
+    if( waitingForShipId ) {
+      return;
+    }
+    if( status === squareUnknown ) {
+      grid[ y ][ x ].status = squareMissed;
+    } else if( status === squareMissed ) {
+      grid[ y ][ x ].status = squareHitUnknown;
+      startWaiting( x, y );
+    } 
+  }
+      
+  recalculate();
+}
+
+function shipClick() {
+  if( !waitingForShipId ) {
+    return;
+  }
+  var row = $( this ),
+      index = row.attr( 'data-index' ),
+      ship = ships[ index ];
+      
+  //already sunk
+  if( ship.status() === 'sunk' ) {
+    return;
+  }  
+  
+  ship.known.push({x: waitX, y: waitY});
+  grid[ waitY ][ waitX ].status = index;
+  stopWaiting();
+  recalculate();
+}
+
+function shipCell( ship, n ) {
+  var color = (
+        ship.status() === 'sunk' ?
+          '#f00':
+          n < ship.known.length ? 
+            '#ff0' :
+            '#777' 
+      ),
+      cell = $( '<div class="cell"></div>' );
+
+  cell.css({
+    background: color
+  });  
+  return cell;
+}
+
+function shipRow( ship, n ) {
+  var row = $( '<div class="ship ship-' + n + '"></div>' );
+  for( var i = 0; i < ship.size; i++ ) {
+    var cell = shipCell( ship, i );
+    row.append( cell );
+    row.attr( 'data-index', n );
+    row.click( shipClick );
+  }
+  return row;  
+}
+
+function shipData() {
+  var data = $( '<div class="ships"></div>' );
+  for( var i = 0; i < ships.length; i++ ) {        
+    data.append( shipRow( ships[ i ], i ) );
+  }
+  return data;
+}
+
+function getCellBackgroundColor( status, tone ) {
+  return (
+    status === squareUnknown ? 
+      'hsl( 60, 100%, ' + ( 50 - ( ( 50 / 255 ) * tone ) ) + '% )' :
+      status === squareMissed ?
+        '#39f' :
+        '#f00'
+  );              
+}
+
+function probabilityTable() {
+  var table = $( '<table></table>' ),
+      tr,
+      td,
+      highest = maxProbability(),
+      lowest = minProbability(),
+      difference = highest - lowest,
+      multiplier = 255 / difference;  
+      
+  iterateGrid( width, height,
+    function( x, y ) {
+      var probability = grid[ y ][ x ].probability,
+          tone = 255 - Math.floor( ( probability - lowest ) * multiplier ),
+          status = grid[ y ][ x ].status,
+          background = getCellBackgroundColor( status, tone );
+          
+      td = $( '<td>' + probability + '</td>' );
+      tr.append( td );
+      td.css({
+        background: background
+      });
+      td.attr( 'data-x', x );
+      td.attr( 'data-y', y );
+      td.click( cellClick );
+    },
+    function( y ) {
+      tr = $( '<tr></tr>' );
+      table.append( tr );
+    }
+  );
+  
+  return table;
+}
+
+function recalculate() {
+  setProbability();
+  var table = probabilityTable();
+  $( '#board' ).html( table );
+  $( '#ships' ).html( shipData() );
+}
+
+$(function () {
+  createGrid();
+  recalculate();
+});
+    </script>
+  </head>
+  <body>    
+    <div id="board"></div>
+    <div id="ships"></div>
+    <pre id="debug"></pre>
+  </body>
+</html>
